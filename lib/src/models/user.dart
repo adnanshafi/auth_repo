@@ -1,5 +1,3 @@
-import 'dart:html';
-
 import 'package:equatable/equatable.dart';
 
 class AppUser extends Equatable {
@@ -21,6 +19,8 @@ class AppUser extends Equatable {
 
   /// [phone] : the phone number of the user if phoneauth was used
   final String? phone;
+
+  static const empty = AppUser();
 
   AppUser copyWith({
     String? uid,

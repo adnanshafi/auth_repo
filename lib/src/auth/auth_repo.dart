@@ -1,6 +1,6 @@
-import 'dart:html';
-
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:auth_repo/auth_repo.dart';
+import 'package:mem_cache/mem_cache.dart';
 
 /// {@template auth_repo}
 /// Repository to handle all authentication operations for firebase
@@ -11,11 +11,33 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 class AuthRepo {
   /// {@macro auth_repo}
-  AuthRepo({required FirebaseAuth auth}) : _auth = auth;
+  AuthRepo({
+    required firebase_auth.FirebaseAuth auth,
+    required MemCache cache,
+  })  : _auth = auth,
+        _cache = cache;
 
-  final FirebaseAuth _auth;
+  final firebase_auth.FirebaseAuth _auth;
+  final MemCache _cache;
 
-  /// Sign up with Email & Password in Firebase
+  static const _userCacheKey = '__user_key__';
+
+  Stream<AppUser> get user {
+    return _auth.authStateChanges().map(
+      (firebaseUser) {
+        final user =
+            firebaseUser == null ? AppUser.empty : firebaseUser.toAppUser;
+        _cache.put<AppUser>(key: _userCacheKey, value: user);
+        return user;
+      },
+    );
+  }
+
+  AppUser get currentUser {
+    return _cache.get<AppUser>(key: _userCacheKey) ?? AppUser.empty;
+  }
+
+  /// Sign up with Email & Password in Firebase & log in
   ///
   /// `email` : email to signUp with
   /// `password` : password to sign up with
@@ -24,12 +46,32 @@ class AuthRepo {
   Future<void> createAccountWithEmailPassword(
     String email,
     String password, {
-    VoidCallback? onSuccess,
+    Function(String? uid)? onSuccess,
     Function(String message)? onFailure,
   }) async {
-    final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email, password: password);
-    _auth.signInWithCredential(userCredential.credential!);
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+          email: email, password: password);
+
+      if (userCredential.credential != null) {
+        _auth.signInWithCredential(userCredential.credential!);
+      }
+      if (onSuccess != null) {
+        if (userCredential.user != null) {
+          onSuccess(userCredential.user!.uid);
+        } else {
+          onSuccess(null);
+        }
+      }
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      if (onFailure != null) {
+        onFailure(_messageFromCode(e.code));
+      }
+    } catch (e) {
+      if (onFailure != null) {
+        onFailure('Please try again');
+      }
+    }
   }
 
   /// Sign In With email & password
@@ -41,12 +83,25 @@ class AuthRepo {
   /// `onSuccess` : Optional Callback on sign in success
   ///
   /// `onFailure` : Optional Callback on sign in failure, takes a `message` argument
-  Future<void> signInEmailPassword(
+  Future<void> signInWithEmailPassword(
     String email,
     String password, {
-    VoidCallback? onSuccess,
+    Function? onSuccess,
     Function(String message)? onFailure,
-  }) async {}
+  }) async {
+    try {
+      _auth.signInWithEmailAndPassword(email: email, password: password);
+      if (onSuccess != null) onSuccess();
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      if (onFailure != null) {
+        onFailure(_messageFromCode(e.code));
+      }
+    } catch (e) {
+      if (onFailure != null) {
+        onFailure('Please try again');
+      }
+    }
+  }
 
   /// Sign in with firebase phoneauth
   ///
@@ -63,7 +118,7 @@ class AuthRepo {
     String phoneNumber, {
     required Function(String verificationId) onCodeSent,
     required Function(String message) onVerificationFailure,
-    VoidCallback? onAutoVerify,
+    Function? onAutoVerify,
     required Function(String verificationId) onAutoVerifyTimeout,
   }) async {
     try {
@@ -84,7 +139,7 @@ class AuthRepo {
           onAutoVerifyTimeout(verificationId);
         },
       );
-    } on FirebaseAuthException catch (e) {
+    } on firebase_auth.FirebaseAuthException catch (e) {
       String message = _messageFromCode(e.code);
       onVerificationFailure(message);
     } catch (e) {
@@ -101,7 +156,8 @@ class AuthRepo {
   /// `onVerificationFailure` : called when sending Otp to device failes! passes a  String `message` to caller
   Future<void> signInWithPhoneNumberWeb(
     String phoneNumber, {
-    required Function(ConfirmationResult confirmationResult) onCodeSent,
+    required Function(firebase_auth.ConfirmationResult confirmationResult)
+        onCodeSent,
     required Function(String message) onVerificationFailure,
   }) async {}
 
@@ -117,11 +173,12 @@ class AuthRepo {
   Future<void> verifyCode(
     String code,
     String verificationId, {
-    VoidCallback? onSuccess,
+    Function? onSuccess,
     Function(String message)? onFailure,
   }) async {
-    PhoneAuthCredential credential = PhoneAuthProvider.credential(
-        verificationId: verificationId, smsCode: code);
+    firebase_auth.PhoneAuthCredential credential =
+        firebase_auth.PhoneAuthProvider.credential(
+            verificationId: verificationId, smsCode: code);
     await _auth.signInWithCredential(credential);
   }
 
@@ -133,5 +190,11 @@ class AuthRepo {
   /// User Readable Message from Error Code
   String _messageFromCode(String code) {
     return 'messageFromCodeNotImplementedYet';
+  }
+}
+
+extension on firebase_auth.User {
+  AppUser get toAppUser {
+    return AppUser(uid: uid);
   }
 }
